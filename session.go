@@ -1,225 +1,216 @@
-package libolm-go
+package golm
 
 /*
-#cgo LDFLAGS: -lolm
+#cgo LDFLAGS: -lolm -L./olm/build
+#cgo CFLAGS: -I./olm/include
 #include <olm/olm.h>
 #include <stdlib.h>
 */
 import "C"
 
 import (
-    //"encoding/json"
-    "fmt"
-    "crypto/rand"
-    "unsafe"
+	"crypto/rand"
+	"fmt"
+	"unsafe"
 )
 
 const (
-    MESSAGE_TYPE_PRE_KEY = iota
-    OLM_MESSAGE_TYPE_MESSAGE = iota
+	messageTypePreKey     = iota
+	olmMessageTypeMessage = iota
 )
 
 type Session struct {
-    buf []byte
-    ptr *C.struct_OlmSession
+	buf []byte
+	ptr *C.struct_OlmSession
 }
 
-func newSession() (Session){
-    session_buf := make([]byte, C.olm_session_size())
-    fmt.Printf("Created buf at %p\n", session_buf)
-    olm_session := C.olm_session(unsafe.Pointer(&session_buf[0]))
-    fmt.Printf("New session: %#v at %v\n", olm_session, &olm_session)
+func newSession() Session {
+	sessionBufs := make([]byte, C.olm_session_size())
+	fmt.Printf("Created buf at %p\n", sessionBufs)
+	olmSession := C.olm_session(unsafe.Pointer(&sessionBufs[0]))
+	fmt.Printf("New session: %#v at %v\n", olmSession, &olmSession)
 
-    return Session{buf: session_buf, ptr: olm_session}
+	return Session{buf: sessionBufs, ptr: olmSession}
 }
 
-func CreateOutboundSession(
-        account Account, their_identity_key string,
-        their_one_time_key string) (Session){
+func CreateOutboundSession(account Account, theirIdentityKey string, theirOneTimeKey string) Session {
+	session := newSession()
 
-    session := newSession()
+	randomLength := C.olm_create_outbound_session_random_length(session.ptr)
+	randomBuffers := make([]byte, randomLength)
 
-    random_length := C.olm_create_outbound_session_random_length(session.ptr)
-    random_buffer := make([]byte, random_length)
+	_, err := rand.Read(randomBuffers)
 
-    _, err := rand.Read(random_buffer)
+	if err != nil {
+		// currently we panic when we don't have enough randomness but it
+		// might be better to return an error instead. however I feel like
+		// other programmers might not recognize what a huge issue not having
+		// randomness is so I chose the crash and burn approach
+		panic(err)
+	}
 
-    if err != nil {
-        // currently we panic when we don't have enough randomness but it
-        // might be better to return an error instead. however I feel like
-        // other programmers might not recognize what a huge issue not having
-        // randomness is so I chose the crash and burn approach
-        panic(err)
-    }
+	identityKeyBuffers := []byte(theirIdentityKey)
+	oneTimeKeyBuffers := []byte(theirOneTimeKey)
 
-    identity_key_buffer := []byte(their_identity_key)
-    one_time_key_buffer := []byte(their_one_time_key)
+	C.olm_create_outbound_session(
+		session.ptr, account.ptr,
+		unsafe.Pointer(&identityKeyBuffers[0]),
+		C.size_t(len(identityKeyBuffers)),
+		unsafe.Pointer(&oneTimeKeyBuffers[0]),
+		C.size_t(len(oneTimeKeyBuffers)),
+		unsafe.Pointer(&randomBuffers[0]), randomLength,
+	)
 
-    C.olm_create_outbound_session(
-        session.ptr, account.ptr,
-        unsafe.Pointer(&identity_key_buffer[0]),
-        C.size_t(len(identity_key_buffer)),
-        unsafe.Pointer(&one_time_key_buffer[0]),
-        C.size_t(len(one_time_key_buffer)),
-        unsafe.Pointer(&random_buffer[0]), random_length,
-    )
-
-    return session
+	return session
 }
 
-func CreateInboundSession(account Account, one_time_key_message string)(Session){
-    session := newSession()
+func CreateInboundSession(account Account, oneTimeKeyMessage string) Session {
+	session := newSession()
 
-    one_time_key_message_buffer := []byte(one_time_key_message)
+	oneTimeKeyMessageBuffers := []byte(oneTimeKeyMessage)
 
-    C.olm_create_inbound_session(
-        session.ptr,
-        account.ptr,
-        unsafe.Pointer(&one_time_key_message_buffer[0]),
-        C.size_t(len(one_time_key_message_buffer)),
-    )
+	C.olm_create_inbound_session(
+		session.ptr,
+		account.ptr,
+		unsafe.Pointer(&oneTimeKeyMessageBuffers[0]),
+		C.size_t(len(oneTimeKeyMessageBuffers)),
+	)
 
-    return session
+	return session
 }
 
-func CreateInboundSessionFrom(account Account, their_identity_key string,
-        one_time_key_message string)(Session){
+func CreateInboundSessionFrom(account Account, theirIdentityKey string, oneTimeKeyMessage string) Session {
+	session := newSession()
+	oneTimeKeyMessageBuffers := []byte(oneTimeKeyMessage)
 
-    session := newSession()
+	C.olm_create_inbound_session(
+		session.ptr,
+		account.ptr,
+		unsafe.Pointer(&oneTimeKeyMessageBuffers[0]),
+		C.size_t(len(oneTimeKeyMessageBuffers)),
+	)
 
-    one_time_key_message_buffer := []byte(one_time_key_message)
-
-    C.olm_create_inbound_session(
-        session.ptr,
-        account.ptr,
-        unsafe.Pointer(&one_time_key_message_buffer[0]),
-        C.size_t(len(one_time_key_message_buffer)),
-    )
-
-    return session
+	return session
 }
 
-func SessionFromPickle(key string, pickle string) (Session){
-    session := newSession()
+func SessionFromPickle(key string, pickle string) Session {
+	session := newSession()
 
-    key_buf := []byte(key)
-    pickle_buffer := []byte(pickle)
+	keyBufs := []byte(key)
+	pickleBuffers := []byte(pickle)
 
-    // this returns a result we should probably inspect
-    C.olm_unpickle_session(
-        session.ptr,
-        unsafe.Pointer(&key_buf[0]), C.size_t(len(key_buf)),
-        unsafe.Pointer(&pickle_buffer[0]), C.size_t(len(pickle_buffer)),
-    )
+	// this returns a result we should probably inspect
+	C.olm_unpickle_session(
+		session.ptr,
+		unsafe.Pointer(&keyBufs[0]), C.size_t(len(keyBufs)),
+		unsafe.Pointer(&pickleBuffers[0]), C.size_t(len(pickleBuffers)),
+	)
 
-    fmt.Println(session.lastError())
+	fmt.Println(session.lastError())
 
-    return session
+	return session
 }
 
-func (s Session) lastError() (string){
-    return C.GoString(C.olm_session_last_error(s.ptr))
+func (s Session) lastError() string {
+	return C.GoString(C.olm_session_last_error(s.ptr))
 }
 
-func (s Session) Pickle(key string) (string){
-    key_buf := []byte(key)
-    pickle_buffer := make([]byte, C.olm_pickle_session_length(s.ptr))
+func (s Session) Pickle(key string) string {
+	keyBufs := []byte(key)
+	pickleBuffer := make([]byte, C.olm_pickle_session_length(s.ptr))
 
-    // this returns a result we should probably inspect
-    C.olm_pickle_session(
-        s.ptr,
-        unsafe.Pointer(&key_buf[0]), C.size_t(len(key_buf)),
-        unsafe.Pointer(&pickle_buffer[0]), C.size_t(len(pickle_buffer)),
-    )
+	// this returns a result we should probably inspect
+	C.olm_pickle_session(
+		s.ptr,
+		unsafe.Pointer(&keyBufs[0]), C.size_t(len(keyBufs)),
+		unsafe.Pointer(&pickleBuffer[0]), C.size_t(len(pickleBuffer)),
+	)
 
-    return string(pickle_buffer)
+	return string(pickleBuffer)
 }
 
 func (s Session) GetSessionID() {
-    id_length := C.olm_session_id_length(s.ptr)
-    id_buffer := make([]byte, id_length)
-    C.olm_session_id(s.ptr, unsafe.Pointer(&id_buffer[0]), id_length)
+	idLength := C.olm_session_id_length(s.ptr)
+	idBuffer := make([]byte, idLength)
+	C.olm_session_id(s.ptr, unsafe.Pointer(&idBuffer[0]), idLength)
 }
 
-func (s Session) Encrypt(plaintext string) (int, string){
-    random_length := C.olm_encrypt_random_length(s.ptr)
-    random_buffer := []byte{0}
-    
-    if random_length > 0 {
-        random_buffer = make([]byte, random_length)
+func (s Session) Encrypt(plaintext string) (int, string) {
+	randomLength := C.olm_encrypt_random_length(s.ptr)
+	randomBuffer := []byte{0}
 
-        _, err := rand.Read(random_buffer)
+	if randomLength > 0 {
+		randomBuffer = make([]byte, randomLength)
 
-        if err != nil {
-            // currently we panic when we don't have enough randomness but it might
-            // be better to return an error instead. however I feel like other
-            // programmers might not recognize what a huge issue not having
-            // randomness is so I chose the crash and burn approach
-            panic(err)
-        }
-    }
-    
-    plaintext_buffer := []byte(plaintext)
-    
-    message_type := C.olm_encrypt_message_type(s.ptr)
-    message_length := C.olm_encrypt_message_length(
-        s.ptr, C.size_t(len(plaintext_buffer)),
-    )
-    message_buffer := make([]byte, message_length)
+		_, err := rand.Read(randomBuffer)
 
-    C.olm_encrypt(
-        s.ptr,
-        unsafe.Pointer(&plaintext_buffer[0]),
-        C.size_t(len(plaintext_buffer)),
-        unsafe.Pointer(&random_buffer[0]), random_length,
-        unsafe.Pointer(&message_buffer[0]), message_length,
-    )
+		if err != nil {
+			// currently we panic when we don't have enough randomness but it might
+			// be better to return an error instead. however I feel like other
+			// programmers might not recognize what a huge issue not having
+			// randomness is so I chose the crash and burn approach
+			panic(err)
+		}
+	}
 
-    return int(message_type), string(message_buffer)
+	plaintextBuffer := []byte(plaintext)
+
+	messageType := C.olm_encrypt_message_type(s.ptr)
+	messageLength := C.olm_encrypt_message_length(
+		s.ptr, C.size_t(len(plaintextBuffer)),
+	)
+	messageBuffer := make([]byte, messageLength)
+
+	C.olm_encrypt(
+		s.ptr,
+		unsafe.Pointer(&plaintextBuffer[0]),
+		C.size_t(len(plaintextBuffer)),
+		unsafe.Pointer(&randomBuffer[0]), randomLength,
+		unsafe.Pointer(&messageBuffer[0]), messageLength,
+	)
+
+	return int(messageType), string(messageBuffer)
 }
 
-func (s Session) Decrypt(message_type int, message string) (string) {
-    message_buffer := []byte(message)
-    max_plaintext_length := C.olm_decrypt_max_plaintext_length(
-        s.ptr, C.size_t(message_type),
-        unsafe.Pointer(&message_buffer[0]), C.size_t(len(message_buffer)),
-    )
-    
-    message_buffer = []byte(message)
-    plaintext_buffer := make([]byte, max_plaintext_length)
-    plaintext_length := C.olm_decrypt(
-        s.ptr, C.size_t(message_type),
-        unsafe.Pointer(&message_buffer[0]), C.size_t(len(message_buffer)),
-        unsafe.Pointer(&plaintext_buffer[0]), max_plaintext_length,
-    )
+func (s Session) Decrypt(messageType int, message string) string {
+	messageBuffer := []byte(message)
+	maxPlaintextLength := C.olm_decrypt_max_plaintext_length(
+		s.ptr, C.size_t(messageType),
+		unsafe.Pointer(&messageBuffer[0]), C.size_t(len(messageBuffer)),
+	)
 
-    return string(plaintext_buffer[:plaintext_length])
+	messageBuffer = []byte(message)
+	plaintextBuffer := make([]byte, maxPlaintextLength)
+	plaintextLength := C.olm_decrypt(
+		s.ptr, C.size_t(messageType),
+		unsafe.Pointer(&messageBuffer[0]), C.size_t(len(messageBuffer)),
+		unsafe.Pointer(&plaintextBuffer[0]), maxPlaintextLength,
+	)
+
+	return string(plaintextBuffer[:plaintextLength])
 }
 
-func (s Session) matches_inbound(one_time_key_message string) (bool){
-    one_time_key_message_buffer := []byte(one_time_key_message)
+func (s Session) matchesInbound(oneTimeKeyMessage string) bool {
+	oneTimeKeyMessageBuffer := []byte(oneTimeKeyMessage)
 
-    result := C.olm_matches_inbound_session(
-        s.ptr,
-        unsafe.Pointer(&one_time_key_message_buffer[0]),
-        C.size_t(len(one_time_key_message_buffer)),
-    )
+	result := C.olm_matches_inbound_session(
+		s.ptr,
+		unsafe.Pointer(&oneTimeKeyMessageBuffer[0]),
+		C.size_t(len(oneTimeKeyMessageBuffer)),
+	)
 
-    return result != 0
+	return result != 0
 }
 
-func (s Session) matches_inbound_from(
-        their_identity_key string, one_time_key_message string) (bool){
-    identity_key_buffer := []byte(their_identity_key)
-    one_time_key_message_buffer := []byte(one_time_key_message)
-
-    result := C.olm_matches_inbound_session_from(
-        s.ptr,
-        unsafe.Pointer(&identity_key_buffer[0]),
-        C.size_t(len(identity_key_buffer)),
-        unsafe.Pointer(&one_time_key_message_buffer[0]),
-        C.size_t(len(one_time_key_message_buffer)),
-    )
-
-    return result != 0
+func (s Session) matchesInboundFrom(theirIdentityKey string, oneTimeKeyMessage string) bool {
+	identityKeyBuffer := []byte(theirIdentityKey)
+	oneTimeKeyMessageBuffer := []byte(oneTimeKeyMessage)
+	result := C.olm_matches_inbound_session_from(
+		s.ptr,
+		unsafe.Pointer(&identityKeyBuffer[0]),
+		C.size_t(len(identityKeyBuffer)),
+		unsafe.Pointer(&oneTimeKeyMessageBuffer[0]),
+		C.size_t(len(oneTimeKeyMessageBuffer)),
+	)
+	return result != 0
 }
